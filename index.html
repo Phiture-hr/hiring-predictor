@@ -683,7 +683,7 @@ function detectEmployeeColumns(header) {
     AVG:    find(['avg','average']),
     MIN:    find(['min']),
     MAX:    find(['max']),
-    COUNT:  find(['#','count','employees','headcount']),
+    COUNT:  find(['#','count','employees','headcount','staff','total','qty','num','nº','n°','nbr']),
   };
 }
 
@@ -711,6 +711,24 @@ function buildEmployeeModel(rows) {
   // Detect if this is a pre-aggregated summary sheet (has avg/min/max/count columns)
   const isSummary = ECOL.AVG !== -1 && ECOL.MIN !== -1 && ECOL.MAX !== -1;
 
+  // If isSummary but COUNT not detected by keyword, find it positionally:
+  // look for a column after MAX containing small whole numbers (headcount values)
+  let countCol = ECOL.COUNT;
+  if (isSummary && countCol === -1 && ECOL.MAX !== -1) {
+    const sampleRows = data.slice(0, Math.min(8, data.length));
+    for (let ci = ECOL.MAX + 1; ci < header.length; ci++) {
+      if (ci === ECOL.DEPT || ci === ECOL.LEVEL || ci === ECOL.REGION) continue;
+      const vals = sampleRows.map(r => {
+        const raw = (r[ci] || '').toString().replace(/[^0-9.]/g, '');
+        return raw ? parseFloat(raw) : NaN;
+      }).filter(v => !isNaN(v));
+      if (vals.length > 0 && vals.every(v => v >= 0 && v < 5000 && Number.isInteger(v))) {
+        countCol = ci;
+        break;
+      }
+    }
+  }
+
   // Helper: clean a string value, reject Google Sheets error strings
   function cleanStr(v) {
     const s = (v || '').toString().replace(/\s+/g, ' ').trim();
@@ -726,7 +744,7 @@ function buildEmployeeModel(rows) {
       const avg   = cleanNum(r[ECOL.AVG]);
       const min   = cleanNum(r[ECOL.MIN]);
       const max   = cleanNum(r[ECOL.MAX]);
-      const count = ECOL.COUNT !== -1 ? parseInt(r[ECOL.COUNT]) || 0 : 1;
+      const count = countCol !== -1 ? (parseInt(r[countCol]) || 0) : 1;
       const dept  = ECOL.DEPT  !== -1 ? cleanStr(r[ECOL.DEPT])  : '';
       const level = ECOL.LEVEL !== -1 ? cleanStr(r[ECOL.LEVEL]) : '';
       if (!isNaN(avg) && avg > 0) {
@@ -803,7 +821,7 @@ function buildEmployeeModel(rows) {
   const allDepts = Object.keys(rolesByDeptArr).sort();
 
   // Total headcount: sum the count column if available (summary sheet), otherwise row count
-  const totalHeadcount = isSummary && ECOL.COUNT !== -1
+  const totalHeadcount = isSummary && countCol !== -1
     ? Object.values(salByRole).reduce((s, d) => s + (d.count || 0), 0)
     : data.length;
 
