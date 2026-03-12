@@ -774,6 +774,13 @@ function buildEmployeeModel(rows) {
   return { salByRole, rolesByDept: rolesByDeptArr, allRoles, allDepts, count: totalHeadcount, isSummary };
 }
 
+// ─── ROLE NAME NORMALIZATION (module-level) ───────────────────────────────────
+function normRole(s) { return (s||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim(); }
+const _levelPrefixes = /^(junior|mid|middle|senior|lead|strategic lead|director|principal|head|vp|executive)\s+/i;
+const _levelSuffixes = /\s+(junior|mid|middle|senior|lead|director|principal|head|vp|executive)$/i;
+function stripLevel(s) { return normRole(s).replace(_levelPrefixes,'').replace(_levelSuffixes,'').trim(); }
+function rolesMatch(a, b) { return normRole(a) === normRole(b) || stripLevel(a) === stripLevel(b); }
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function mean(arr) { return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
 function mode(arr) {
@@ -824,14 +831,14 @@ function onDeptChange() {
 
   // Collect roles from hiring data (with hire counts)
   const hiringRoles = (dept && MODEL.rolesByDept[dept]) ? MODEL.rolesByDept[dept] : {};
-  // Collect roles from employee data (may include roles never hired before)
-  const empRoles = (dept && EMP_MODEL && EMP_MODEL.rolesByDept[dept]) ? EMP_MODEL.rolesByDept[dept] : [];
+  const hiringRoleNames = Object.keys(hiringRoles);
+  // Collect roles from employee data — exclude any that are just a level-prefixed duplicate
+  // of an existing hiring role (e.g. "Senior Growth Consultant" when "Growth Consultant" exists)
+  const empRolesRaw = (dept && EMP_MODEL && EMP_MODEL.rolesByDept[dept]) ? EMP_MODEL.rolesByDept[dept] : [];
+  const empRoles = empRolesRaw.filter(er => !hiringRoleNames.some(hr => rolesMatch(er, hr)));
 
   // Merge all role names
-  const allRoleNames = [...new Set([
-    ...Object.keys(hiringRoles),
-    ...empRoles
-  ])].sort();
+  const allRoleNames = [...new Set([...hiringRoleNames, ...empRoles])].sort();
 
   if (!allRoleNames.length) {
     roleEl.innerHTML = '<option value="">Select department first</option>';
@@ -976,21 +983,8 @@ function runPrediction() {
   // Current Team Salary card
   const empCard = document.getElementById('emp-sal-card');
   if (EMP_MODEL && roleName) {
-    // Try exact match first, then case-insensitive fallback
-    // Normalize: lowercase, strip punctuation/extra spaces for fuzzy matching
-    function normRole(s) { return (s||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim(); }
-    // Strip leading/trailing level words so "Senior Growth Consultant" matches "Growth Consultant"
-    const levelPrefixes = /^(junior|mid|middle|senior|lead|strategic lead|director|principal|head|vp|executive)\s+/i;
-    const levelSuffixes = /\s+(junior|mid|middle|senior|lead|director|principal|head|vp|executive)$/i;
-    function stripLevel(s) { return normRole(s).replace(levelPrefixes,'').replace(levelSuffixes,'').trim(); }
-    const normTarget    = normRole(roleName);
-    const strippedTarget = stripLevel(roleName);
-    const roleKey = Object.keys(EMP_MODEL.salByRole).find(k =>
-      k === roleName ||
-      k.toLowerCase().trim() === roleName.toLowerCase().trim() ||
-      normRole(k) === normTarget ||
-      stripLevel(k) === strippedTarget
-    );
+    // Match using module-level normRole / stripLevel / rolesMatch
+    const roleKey = Object.keys(EMP_MODEL.salByRole).find(k => rolesMatch(k, roleName));
     const empData = roleKey ? EMP_MODEL.salByRole[roleKey] : null;
     if (empData && !isNaN(empData.mean) && empData.mean > 0) {
       empCard.style.display = 'block';
